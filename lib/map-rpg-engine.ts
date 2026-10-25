@@ -53,11 +53,44 @@ function dmPlayerName(ctx: DMContext): string {
 }
 
 // ── Extract JSON from LLM response (handles code blocks, quotes, truncation, etc.) ──
+
+/** 取「第一个括号配平完整的 JSON 对象」。返回 null 表示括号没闭合（可能被截断）。 */
+function sliceFirstBalancedObject(s: string): string | null {
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return s.slice(0, i + 1);
+    }
+  }
+  return null;
+}
+
+/** 判断一段文本是否像 JSON / 声明结构残留——用于避免把代码当台词漏到界面上。 */
+function looksLikeJsonResidue(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (/^[{[]/.test(t)) return true;
+  return /"(speech|action|emotion|affinity|text|narration|npc_lines)"\s*:/.test(t);
+}
+
 function extractJSON(text: string): string {
   let s = text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
   const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
+  if (start >= 0) s = s.slice(start);
+  // 只取第一个括号配平完整的对象：模型常把多个 JSON 对象首尾相连输出，
+  // 旧实现用 lastIndexOf("}") 取尾，会拼成 {...}{...} 这种非法 JSON，
+  // 解析必然失败，兜底分支再把原文当台词渲染，界面上就会漏出代码。
+  const firstObject = sliceFirstBalancedObject(s);
+  if (firstObject) s = firstObject;
   // Chinese punctuation (outside strings is safe)
   s = s.replace(/，/g, ",").replace(/：/g, ":").replace(/；/g, ";");
   // Remove trailing commas before ] or }
@@ -849,8 +882,16 @@ export async function characterReact(
       const p = JSON.parse(extractJSON(rawOutput));
       return { speaker: character.name, text: p.text || "……", emotion: p.emotion || "neutral", action: p.action || undefined };
     } catch {
-      // If not JSON, use raw text as dialogue
-      return { speaker: character.name, text: rawOutput.slice(0, 300), emotion: "neutral" };
+      // 解析失败：先抢救字段，再退回纯文本；JSON 残留一律不显示，避免漏代码。
+      const recovered = recoverDeclaration(rawOutput);
+      if (recovered) {
+        return { speaker: character.name, text: recovered.speech, emotion: recovered.emotion, action: recovered.action };
+      }
+      const text = rawOutput.slice(0, 300).trim();
+      if (looksLikeJsonResidue(text)) {
+        return { speaker: character.name, text: "……", emotion: "neutral" };
+      }
+      return { speaker: character.name, text, emotion: "neutral" };
     }
   } catch (e) {
     console.warn("[characterReact] Error:", e);
@@ -927,6 +968,24 @@ export async function continueEvent(
 
 // ── 2e. Companion Declaration (Collect-Resolve-Narrate loop) ──
 
+/** 从解析失败的原始输出里抢救宣言字段（模型常输出多段 JSON，首段仍可用）。 */
+function recoverDeclaration(raw: string): { speech: string; action: string; emotion: string; affinityDelta: number } | null {
+  const unescape = (v: string) => v.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  const m = raw.match(/"speech"\s*:\s*"((?:[^"\\]|\\.)*)"/s) || raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/s);
+  if (!m) return null;
+  const speech = unescape(m[1]).trim();
+  if (!speech) return null;
+  const actionM = raw.match(/"action"\s*:\s*"((?:[^"\\]|\\.)*)"/s);
+  const emotionM = raw.match(/"emotion"\s*:\s*"([a-zA-Z]+)"/);
+  const affinityM = raw.match(/"affinity"\s*:\s*(-?\d+)/);
+  return {
+    speech,
+    action: actionM ? unescape(actionM[1]).trim() : "跟随队伍",
+    emotion: emotionM ? emotionM[1] : "neutral",
+    affinityDelta: affinityM ? Math.max(-3, Math.min(3, Math.round(Number(affinityM[1])))) : 0,
+  };
+}
+
 export async function companionDeclare(
   characterId: string,
   _apiConfigFallback: ApiConfig,
@@ -971,14 +1030,20 @@ export async function companionDeclare(
         affinityDelta: typeof p.affinity === "number" ? Math.max(-3, Math.min(3, Math.round(p.affinity))) : 0,
       };
     } catch {
-      // Fallback: parse RP-style "(动作)台词" or "*动作*台词" format
+      // 兜底顺序：抢救 JSON 字段 → RP 体「(动作)台词」→ 纯文本 → 省略号。
+      // 绝不把原始输出直接当 speech，否则多段 JSON/代码会漏到界面里。
+      const recovered = recoverDeclaration(rawOutput);
+      if (recovered) return { speaker: character.name, ...recovered };
+
       const text = rawOutput.slice(0, 1500).trim();
       const rpMatch = text.match(/^[（(](.+?)[）)](.+)/s) || text.match(/^\*(.+?)\*(.+)/s);
       if (rpMatch) {
         return { speaker: character.name, speech: rpMatch[2].trim(), action: rpMatch[1].trim(), emotion: "neutral" };
       }
-      // Pure dialogue — no action extracted
-      return { speaker: character.name, speech: text, action: "跟随队伍", emotion: "neutral" };
+      if (!looksLikeJsonResidue(text)) {
+        return { speaker: character.name, speech: text, action: "跟随队伍", emotion: "neutral" };
+      }
+      return { speaker: character.name, speech: "……", action: "沉默不动", emotion: "neutral" };
     }
   } catch (e) {
     console.warn("[companionDeclare] Error:", e);
