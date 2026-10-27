@@ -7226,3 +7226,26 @@
   background: currentColor;
   animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }
+
+/* ── 加号面板高度约束 ──
+   .chat-input-bar 是 absolute bottom:0 的贴底容器，高度完全由内容撑开。
+   加号面板（.chat-plus-menu）的条目数随已安装的自定义 APP 增长，条目一多，
+   整块输入栏就一路向上长过屏幕，把消息列表顶没，而面板自身没有滚动能力，
+   用户既看不到被顶掉的内容也无法滑动。
+   这里给面板单独限定最大高度并在内部滚动，输入栏就不会再无限增高。 */
+.chat-plus-menu {
+  max-height: min(42vh, 340px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 插件往加号面板插的工具条同样可能很长（如「共享屏幕」卡片），一并限高。
+   面板内部滚动时不要触发聊天列表跟着滚。 */
+.chat-plus-menu-slot,
+.chat-plugin-input-toolbar {
+  overscroll-behavior: contain;
+  max-height: min(24vh, 200px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
