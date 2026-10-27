@@ -7227,22 +7227,61 @@
   animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }
 
-/* ── 加号面板高度约束 ──
-   .chat-input-bar 是 absolute bottom:0 的贴底容器，高度完全由内容撑开。
-   加号面板（.chat-plus-menu）的条目数随已安装的自定义 APP 增长，条目一多，
-   整块输入栏就一路向上长过屏幕，把消息列表顶没，而面板自身没有滚动能力，
-   用户既看不到被顶掉的内容也无法滑动。
-   这里给面板单独限定最大高度并在内部滚动，输入栏就不会再无限增高。 */
-.chat-plus-menu {
-  max-height: min(42vh, 340px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+/* ── 加号面板：仿微信两行分页 ──
+   .chat-input-bar 是 absolute bottom:0 的贴底容器，高度完全由内容撑开；
+   加号条目数随已安装的自定义 APP 增长，条目一多整块输入栏就向上长过屏幕，
+   把消息列表顶出可视区。改为固定四列两行、左右滑动翻页，高度不再随条目增长。 */
+.chat-plus-menu-wrap {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-/* 插件往加号面板插的工具条同样可能很长（如「共享屏幕」卡片），一并限高。
-   面板内部滚动时不要触发聊天列表跟着滚。 */
-.chat-plus-menu-slot,
+.chat-plus-pager {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-x;
+}
+.chat-plus-pager::-webkit-scrollbar { display: none; }
+
+.chat-plus-page {
+  flex: 0 0 100%;
+  width: 100%;
+  scroll-snap-align: start;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px 2px;
+  padding: 8px 0 6px;
+}
+
+.chat-plus-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+.chat-plus-dot {
+  width: 5px;
+  height: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c-text) 26%, transparent);
+  transition: width 0.18s ease, background-color 0.18s ease;
+  cursor: pointer;
+}
+.chat-plus-dot[data-active] {
+  width: 12px;
+  background: color-mix(in srgb, var(--c-text) 62%, transparent);
+}
+
+/* 插件往加号面板插的工具条同样可能很长（如「共享屏幕」卡片），限高并内部滚动 */
 .chat-plugin-input-toolbar {
   overscroll-behavior: contain;
   max-height: min(24vh, 200px);

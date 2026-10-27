@@ -712,6 +712,9 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     };
 
     const panelOpen = showEmojiPanel || showStickerPanel || showPlusMenu;
+    // 加号面板分页：仿微信，每页两行图标，左右滑动翻页
+    const [plusMenuPage, setPlusMenuPage] = useState(0);
+    const plusPagerRef = useRef<HTMLDivElement | null>(null);
     const suggestCharacterIds = useMemo(
         () => (isGroup ? (stickerCharacterIds || []) : characterId ? [characterId] : []),
         [isGroup, stickerCharacterIds, characterId],
@@ -737,6 +740,12 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
             onClick: () => onOpenCustomPlusAction(action),
         })),
     ];
+    // 每页 8 个（4 列 × 2 行），与微信一致
+    const PLUS_MENU_PAGE_SIZE = 8;
+    const plusMenuPages: typeof plusMenuItems[] = [];
+    for (let i = 0; i < plusMenuItems.length; i += PLUS_MENU_PAGE_SIZE) {
+        plusMenuPages.push(plusMenuItems.slice(i, i + PLUS_MENU_PAGE_SIZE));
+    }
 
     return (
         <div className="chat-input-bar chat-room-main-pane flex flex-col" data-ui="input">
@@ -881,15 +890,48 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
             </div>
 
             {showPlusMenu && (
-                <div className="chat-plus-menu">
-                    {plusMenuItems.map((item, i) => (
-                        <div key={`${item.label}-${i}`} onClick={item.onClick} className="chat-plus-menu-item flex flex-col items-center gap-1.5 cursor-pointer" {...(item.active ? { "data-active": "" } : {})}>
-                            <div className="chat-plus-icon-box">
-                                {item.icon}
+                <div className="chat-plus-menu-wrap">
+                    <div
+                        className="chat-plus-pager"
+                        ref={plusPagerRef}
+                        onScroll={(e) => {
+                            const el = e.currentTarget;
+                            if (!el.clientWidth) return;
+                            const page = Math.round(el.scrollLeft / el.clientWidth);
+                            if (page !== plusMenuPage) setPlusMenuPage(page);
+                        }}
+                    >
+                        {plusMenuPages.map((page, pageIdx) => (
+                            <div className="chat-plus-page" key={`plus-page-${pageIdx}`}>
+                                {page.map((item, i) => (
+                                    <div key={`${item.label}-${i}`} onClick={item.onClick} className="chat-plus-menu-item flex flex-col items-center gap-1.5 cursor-pointer" {...(item.active ? { "data-active": "" } : {})}>
+                                        <div className="chat-plus-icon-box">
+                                            {item.icon}
+                                        </div>
+                                        <span className="ts-11 text-[var(--c-text)]">{item.label}</span>
+                                    </div>
+                                ))}
                             </div>
-                            <span className="ts-11 text-[var(--c-text)]">{item.label}</span>
+                        ))}
+                    </div>
+                    {plusMenuPages.length > 1 && (
+                        <div className="chat-plus-dots">
+                            {plusMenuPages.map((_, i) => (
+                                <button
+                                    key={`plus-dot-${i}`}
+                                    type="button"
+                                    className="chat-plus-dot"
+                                    {...(i === plusMenuPage ? { "data-active": "" } : {})}
+                                    aria-label={`第 ${i + 1} 页`}
+                                    onClick={() => {
+                                        const el = plusPagerRef.current;
+                                        if (!el) return;
+                                        el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
+                                    }}
+                                />
+                            ))}
                         </div>
-                    ))}
+                    )}
                 </div>
             )}
             {showPlusMenu && (
